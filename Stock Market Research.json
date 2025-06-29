@@ -1,0 +1,527 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"symbols\": \"AAPL,MSFT,NVDA,TSLA,AMZN,GOOGL,META,JPM,XOM,UNH,GME\"\n}\n",
+        "options": {}
+      },
+      "id": "546a8cd3-7378-444f-a336-f752bf2d8b05",
+      "name": "Ticker List",
+      "type": "n8n-nodes-base.set",
+      "position": [
+        1940,
+        300
+      ],
+      "typeVersion": 3.4
+    },
+    {
+      "parameters": {
+        "url": "=https://data.alpaca.markets/v2/stocks/bars",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "symbols",
+              "value": "={{ $json.symbols }}"
+            },
+            {
+              "name": "timeframe",
+              "value": "1Day"
+            },
+            {
+              "name": "limit",
+              "value": "1000"
+            },
+            {
+              "name": "feed",
+              "value": "iex"
+            },
+            {
+              "name": "=start",
+              "value": "={{ new Date(Date.now() - 100 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] }}"
+            },
+            {
+              "name": "end",
+              "value": "={{ new Date().toISOString().split('T')[0] }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c86bc6ab-d2a5-422d-baec-377fc940ca9f",
+      "name": "Fetch Stock Data",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        2160,
+        300
+      ],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "language": "python",
+        "pythonCode": "import pandas as pd\nimport numpy as np\nimport json\n\nbars_by_symbol = items[0]['json']['bars']\nstocks = []\n\nfor symbol, bars in bars_by_symbol.items():\n    closes = [bar['c'] for bar in bars if 'c' in bar]\n    if len(closes) < 30:\n        continue\n\n    df = pd.DataFrame({'close': closes})\n\n    # RSI(14)\n    delta = df['close'].diff()\n    gain = delta.clip(lower=0)\n    loss = -delta.clip(upper=0)\n    avg_gain = gain.rolling(14).mean()\n    avg_loss = loss.rolling(14).mean()\n    rs = avg_gain / avg_loss\n    df['rsi'] = 100 - (100 / (1 + rs))\n\n    # MACD (12,26,9)\n    ema12 = df['close'].ewm(span=12, adjust=False).mean()\n    ema26 = df['close'].ewm(span=26, adjust=False).mean()\n    df['macd'] = ema12 - ema26\n    df['signal'] = df['macd'].ewm(span=9, adjust=False).mean()\n\n    latest = df.iloc[-1]\n    rsi = latest['rsi']\n    macd = latest['macd']\n    signal = latest['signal']\n\n    status = \"Hold\"\n    if rsi < 30 and macd > signal:\n        status = \"Buy\"\n    elif rsi > 70 and macd < signal:\n        status = \"Sell\"\n\n    stocks.append({\n        \"ticker\": symbol,\n        \"rsi\": round(float(rsi), 2),\n        \"macd\": round(float(macd), 2),\n        \"signal\": round(float(signal), 2),\n        \"status\": status\n    })\n\nreturn [{\n    \"json\": {\n        \"summary\": json.dumps({\n            \"stocks\": stocks\n        }, separators=(',', ':')),\n      \"stocks\": stocks\n    }\n}]\n"
+      },
+      "id": "87397f47-6584-40d6-a6a4-e8604c9fba45",
+      "name": "Interpret Data",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        2380,
+        300
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "resource": "assistant",
+        "assistantId": {
+          "mode": "list",
+          "value": "REDACTED_ASSISTANT_ID",
+          "cachedResultName": "REDACTED_ASSISTANT"
+        },
+        "prompt": "define",
+        "text": "=Here is the technical indicator data as JSON:\n\n{{ $json.summary }}\n\nPulled as of {{ $now }}",
+        "options": {}
+      },
+      "id": "9f2c9128-4006-48f4-99d4-8e58f1a24265",
+      "name": "Stock Analysis Assistant",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "position": [
+        2580,
+        300
+      ],
+      "typeVersion": 1.8
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 30 6-14 * * 1-5"
+            }
+          ]
+        }
+      },
+      "id": "b8d1b5a3-d138-4912-bde8-623ac230d186",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        1260,
+        300
+      ],
+      "typeVersion": 1.2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "version": 2,
+            "leftValue": "",
+            "caseSensitive": true,
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "acca2d72-d9db-436d-aee8-81a3a359fe85",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.is_open }}",
+              "rightValue": ""
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9d07b71a-77ce-4700-a4ed-1b13c95fb37d",
+      "name": "Check if Market is open",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        1700,
+        300
+      ],
+      "typeVersion": 2.2
+    },
+    {
+      "parameters": {},
+      "id": "f05e4b53-d322-48f1-bb7b-2d62e1bec4fb",
+      "name": "Market is Closed",
+      "type": "n8n-nodes-base.noOp",
+      "position": [
+        1940,
+        500
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "url": "https://paper-api.alpaca.markets/v2/clock",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpCustomAuth",
+        "options": {}
+      },
+      "id": "06fecc52-71ea-4b49-884f-76852962c1d0",
+      "name": "Check Market Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        1500,
+        300
+      ],
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "content": "",
+        "width": 220,
+        "color": 3
+      },
+      "id": "ca812847-dfff-42bc-b7f1-f1fd7fec5367",
+      "name": "Sticky Note7",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1880,
+        480
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {},
+      "id": "1aa9c5ba-4621-40e4-9449-cf4c0ec91893",
+      "name": "End of Flow",
+      "type": "n8n-nodes-base.noOp",
+      "position": [
+        3180,
+        300
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "guildId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "channelId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "content": "={{ $json.output }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        2960,
+        300
+      ],
+      "id": "47a4b920-1d3e-4bc9-a026-0e0035f6cfbf",
+      "name": "Send a message",
+      "webhookId": "c6b178ed-438f-4f2b-a72c-b5e4085fa294"
+    },
+    {
+      "parameters": {
+        "text": "={{ $json.output }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2960,
+        460
+      ],
+      "id": "d74f7dc9-10e2-4338-ab97-8f4bdc59b64e",
+      "name": "Send a text message",
+      "webhookId": "052f6a39-5fcf-4a17-9fd6-88bc009d3671"
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 680,
+        "width": 220,
+        "color": 4
+      },
+      "id": "da5d66b9-4b2e-4df9-8f28-344e56cd9f19",
+      "name": "Sticky Note9",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        3120,
+        -60
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## 💬 Post to Discord + Telegram\n\n**Node:** `Send Summary to User(s)`  \nSends the GPT-generated summary to Discord + Telegram Channel(s) using:\n```js\n{{ $json.output }}\n```\n⚙️ Configured with the appropriate Discord + Telegram user or channel.",
+        "height": 680,
+        "width": 220,
+        "color": 4
+      },
+      "id": "9cb89a8d-3070-4a75-8bdc-2e00d2d9e35b",
+      "name": "Sticky Note8",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2900,
+        -60
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## 🤖 AI Assistant Summary\n\n**Node:** `Stock Analysis Assistant`  \nUses a custom OpenAI assistant to:\n- Group stocks into categories\n- Provide commentary in plain English\n- Teach users simple market behaviors\n\nPrompt includes:\n- Stock JSON (`summary`)\n- Timestamp (`$now`)\n\n📌 Uses Discord + Telegram - friendly markdown output.",
+        "height": 540,
+        "width": 360,
+        "color": 4
+      },
+      "id": "4b403be8-7313-4d5b-b0fc-a52ab69bebd0",
+      "name": "Sticky Note6",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2540,
+        -60
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## 🧮 Interpret Data\n\n**Node:** `Interpret Data`  \nPython code calculates:\n- RSI(14)\n- MACD(12,26,9)\n- Decision status: `\"Buy\"`, `\"Hold\"`, or `\"Sell\"`\n\nOutputs:\n- `stocks`: a list of indicator values and status\n- `summary`: JSON string version for GPT",
+        "height": 540,
+        "width": 220,
+        "color": 4
+      },
+      "id": "d679f960-fd19-488d-b383-6a5841f5a853",
+      "name": "Sticky Note5",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2320,
+        -60
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## 📈 Ticker Setup\n\n**Node:** `Ticker List`  \nSets the stock symbols to be analyzed.\n\n📌 You can update this list to monitor different stocks.",
+        "height": 540,
+        "width": 220,
+        "color": 4
+      },
+      "id": "a522c715-1d6c-4d1f-b493-c03c178b37cc",
+      "name": "Sticky Note3",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1880,
+        -60
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## 🔗 Fetch Stock Data\n\n**Node:** `Fetch Stock Data`  \nCalls Alpaca’s `/v2/stocks/bars` endpoint with:\n- `symbols`: from `Ticker List`\n- `timeframe`: `1Day`\n- `limit`: `1000`\n- `feed`: `iex` (avoid SIP permission error)\n- `start`: 100 days ago\n- `end`: today",
+        "height": 540,
+        "width": 220,
+        "color": 4
+      },
+      "id": "b57aff1b-6295-4635-8ca0-45e1312019d2",
+      "name": "Sticky Note4",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2100,
+        -60
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## 🏛️ Market Status Check\n\n**Node:** `Check Market Status`  \nEndpoint: `https://paper-api.alpaca.markets/v2/clock`\n\nChecks if the market is open using Alpaca’s `/clock` endpoint.\n\n**Node:** `Check if Market is open`  \n- ✅ If true → continue  \n- ❌ If false → exit gracefully via the “Market is Closed” NoOp node",
+        "height": 700,
+        "width": 460,
+        "color": 7
+      },
+      "id": "71385d0e-0f53-488f-a13f-18c0df33af67",
+      "name": "Sticky Note2",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1420,
+        -60
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## 📅 Schedule Trigger\n\n**Node:** `Schedule Trigger`  \nRuns every half hour between 6:30 AM and 2:30 PM (PST), Monday to Friday.  \n\n\n⏰ Triggers analysis only during U.S. stock market hours.\n\n**Cron Expression:** `0 30 6-14 * * 1-5`",
+        "height": 700,
+        "width": 260,
+        "color": 7
+      },
+      "id": "e6075996-8038-46c6-8bf5-1a76816cd6be",
+      "name": "Sticky Note1",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        1160,
+        -60
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "# 🧠 Stock Analysis Assistant\n\nThis workflow analyzes selected S&P 500 stocks using RSI and MACD indicators, summarizes the insights into plain English, and posts an update to Discord + Telegram every hour during U.S. market hours (Mon–Fri).",
+        "width": 660
+      },
+      "id": "fe64504e-72b3-4470-b397-9707b2017008",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        500,
+        -60
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "content": "## 🤖 AI Assistant Prompt\n\nYou are a financial assistant writing a quick, readable market update for a general audience. Your job is to help people understand how well-known stocks are behaving — even if they aren’t professional traders.\n\nYou’ll be given:\n\nA list of stocks with technical indicators (e.g., momentum data)\nA timestamp (in RFC 3339 or ISO format) for when the data was pulled.\n📌 Your task:\nGroup the stocks into three categories:\n🟢 Buy Watchlist – Stocks showing signs of recovery or upward momentum\n⚪ Neutral Hold – Stocks with steady or unclear direction\n🔴 Caution / Sell – Stocks that appear overbought or may pull back\nFor each stock:\nWrite a short, plain-language insight about what’s happening\nUse familiar terms like “gaining steam,” “cooling off,” or “showing hesitation”\nAvoid technical jargon like RSI or MACD unless context makes it helpful\nAdd a helpful tip or comment for each stock (e.g.,\n“This pattern often signals hesitation” or\n“This dip might attract bargain hunters”)\nFinish with a summary line using the timestamp like this:\n📦 Respond in Discord + Telegram Markdown Only:\n\n*📊 Market Summary example*\n\n🟢 *Buy Watchlist*  \n• TSLA – Recovering after a dip; gaining steam. This type of rebound often attracts early buyers.\n\n⚪ *Neutral Hold*  \n• AAPL – Holding steady. This often means the market is waiting on new developments.  \n• GOOGL – Moving sideways. A sign of consolidation before potential breakout.  \n• MSFT – Little movement. Could be digesting prior gains.  \n• NVDA – Slight back-and-forth. May indicate indecision in the market.\n\n🔴 *Caution / Sell*  \n• None at this time.\n",
+        "height": 780,
+        "width": 660,
+        "color": 5
+      },
+      "id": "25ceb153-97d7-47d4-81dd-1b3fd0e3c464",
+      "name": "Sticky Note10",
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        500,
+        100
+      ],
+      "typeVersion": 1
+    }
+  ],
+  "connections": {
+    "Ticker List": {
+      "main": [
+        [
+          {
+            "node": "Fetch Stock Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Stock Data": {
+      "main": [
+        [
+          {
+            "node": "Interpret Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpret Data": {
+      "main": [
+        [
+          {
+            "node": "Stock Analysis Assistant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stock Analysis Assistant": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check Market Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check if Market is open": {
+      "main": [
+        [
+          {
+            "node": "Ticker List",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Market is Closed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Market is Closed": {
+      "main": [
+        []
+      ]
+    },
+    "Check Market Status": {
+      "main": [
+        [
+          {
+            "node": "Check if Market is open",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message": {
+      "main": [
+        [
+          {
+            "node": "End of Flow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a text message": {
+      "main": [
+        [
+          {
+            "node": "End of Flow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "377d98c45abc719f2908da875e2b1b6f50dd844a0ae87f432982fbd04edea496"
+  }
+}
